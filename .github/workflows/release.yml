@@ -124,6 +124,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GH_TOKEN" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
+          # helm keeps its credentials in its own config; cosign reads the docker one, so it needs its own login
+          echo "$GH_TOKEN" | cosign login ghcr.io --username "$ACTOR" --password-stdin
           helm push "dist/tvdash-${VERSION}.tgz" "oci://ghcr.io/${OWNER}/charts" 2>&1 | tee push.log
           DIGEST=$(sed -n 's/^Digest: //p' push.log)
           test -n "$DIGEST"
