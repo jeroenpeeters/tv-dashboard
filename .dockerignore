@@ -1,0 +1,22 @@
+# Only what the Dockerfile COPYs is needed; keep everything personal or local out of the build context.
+.git
+.github
+.idea
+.vscode
+.venv
+.state
+out
+.env
+.env.*
+*.local.*
+config.local.json
+CLAUDE*.md
+__pycache__
+*.pyc
+tests
+mockups.py
+deploy
+charts
+*.md
+*.iml
+*.tgz

@@ -1,0 +1,152 @@
+{{- if not .Values.tvs }}
+{{- fail "Set tvs: at least one TV (name and address) the service may control" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tvdash.fullname" . }}
+  labels:
+    {{- include "tvdash.labels" . | nindent 4 }}
+spec:
+  # One instance: it keeps per-TV state in the volume and works through one TV job at a time.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "tvdash.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if .Values.config }}
+        checksum/config: {{ .Values.config | toJson | sha256sum }}
+        {{- end }}
+        {{- if not .Values.secret.existingSecret }}
+        checksum/secret: {{ print .Values.secret.apiKey .Values.secret.hassToken | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "tvdash.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "tvdash.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- if .Values.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tvdash
+          image: {{ include "tvdash.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tvdash.secretName" . }}
+                  key: api-key
+            - name: TVS
+              value: {{ include "tvdash.tvs" . | quote }}
+            {{- with .Values.hass.url }}
+            - name: HASS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if include "tvdash.hasHassToken" . }}
+            - name: HASS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "tvdash.secretName" . }}
+                  key: hass-token
+                  optional: true
+            {{- end }}
+            {{- if .Values.config }}
+            - name: TVDASH_CONFIG
+              value: /config/tvdash.json
+            {{- end }}
+            {{- with .Values.doorbellCamera }}
+            - name: DOORBELL_CAMERA
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.fallbackArt }}
+            - name: FALLBACK_ART
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.config }}
+            - name: config
+              mountPath: /config
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (include "tvdash.fullname" .) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp           # rendered images and Chromium's profile; gone with the pod
+          emptyDir: {}
+        {{- if .Values.config }}
+        - name: config
+          configMap:
+            name: {{ include "tvdash.fullname" . }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

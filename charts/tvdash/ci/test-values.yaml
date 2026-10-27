@@ -1,0 +1,15 @@
+# Values for `helm lint` / `helm template` in CI: made-up addresses and placeholder secrets, nothing real.
+image: {repository: ghcr.io/example/tvdash}
+tvs:
+  - {name: kitchen, address: 192.168.1.50}
+  - {name: living_room, address: 192.168.1.51}
+hass: {url: "http://ha.example:8123"}
+secret: {apiKey: not-a-real-key, hassToken: not-a-real-token}
+doorbellCamera: camera.front_door
+config:
+  people: [{name: Anna, calendars: [anna]}]
+ingress:
+  enabled: true
+  className: nginx
+  hosts: [{host: tvdash.example.com}]
+  tls: [{secretName: tvdash-tls, hosts: [tvdash.example.com]}]

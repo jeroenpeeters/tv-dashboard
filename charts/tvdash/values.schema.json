@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {"type": "object"},
+    "nameOverride": {"type": "string"},
+    "fullnameOverride": {"type": "string"},
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "imagePullSecrets": {"type": "array"},
+    "tvs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "address"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+          "address": {"type": "string", "pattern": "^[A-Za-z0-9.-]+$"}
+        }
+      }
+    },
+    "hass": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"url": {"type": "string", "pattern": "^(https?://.+)?$"}}
+    },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {"type": "string"},
+        "apiKey": {"type": "string"},
+        "hassToken": {"type": "string"}
+      }
+    },
+    "config": {"type": "object"},
+    "doorbellCamera": {"type": "string", "pattern": "^(camera\\.[a-z0-9_]+)?$"},
+    "fallbackArt": {"type": "string", "pattern": "^[A-Za-z0-9_-]*$"},
+    "extraEnv": {"type": "array"},
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "existingClaim": {"type": "string"},
+        "storageClass": {"type": "string"},
+        "accessMode": {"type": "string"},
+        "size": {"type": "string"}
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["ClusterIP", "NodePort", "LoadBalancer"]},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "nodePort": {"type": ["integer", "null"]},
+        "annotations": {"type": "object"}
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "className": {"type": "string"},
+        "annotations": {"type": "object"},
+        "hosts": {"type": "array"},
+        "tls": {"type": "array"}
+      }
+    },
+    "hostNetwork": {"type": "boolean"},
+    "resources": {"type": "object"},
+    "podAnnotations": {"type": "object"},
+    "podLabels": {"type": "object"},
+    "nodeSelector": {"type": "object"},
+    "tolerations": {"type": "array"},
+    "affinity": {"type": "object"},
+    "priorityClassName": {"type": "string"},
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {"type": "boolean"},
+        "name": {"type": "string"},
+        "annotations": {"type": "object"}
+      }
+    }
+  }
+}

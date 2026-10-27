@@ -1,0 +1,9 @@
+apiVersion: v2
+name: tvdash
+description: Dashboards as art on a Samsung The Frame, driven by Home Assistant
+type: application
+kubeVersion: ">=1.25.0-0"
+# The release workflow replaces both with the version of the git tag (v1.2.3 -> 1.2.3).
+version: 0.0.0
+appVersion: "0.0.0"
+keywords: [home-assistant, samsung-frame, dashboard]

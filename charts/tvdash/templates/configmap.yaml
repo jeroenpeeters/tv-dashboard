@@ -1,0 +1,11 @@
+{{- if .Values.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tvdash.fullname" . }}
+  labels:
+    {{- include "tvdash.labels" . | nindent 4 }}
+data:
+  tvdash.json: |
+    {{- .Values.config | toPrettyJson | nindent 4 }}
+{{- end }}

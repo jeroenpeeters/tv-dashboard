@@ -1,0 +1,67 @@
+# Flux: pull the chart from ghcr.io and deploy it. Replace OWNER (your GitHub user, lowercase) and REPO.
+#
+# The two secrets are NOT in this file. Create the Secret yourself, encrypted (SOPS / External Secrets / ...):
+#   kubectl -n tvdash create secret generic tvdash-secrets \
+#     --from-literal=api-key="$(openssl rand -hex 32)" \
+#     --from-literal=hass-token="<Home Assistant long-lived access token>" --dry-run=client -o yaml | sops ...
+# Home Assistant sends the same api-key as the X-Api-Key header.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: tvdash
+  namespace: tvdash
+spec:
+  interval: 1h
+  url: oci://ghcr.io/OWNER/charts/tvdash
+  ref:
+    semver: ">=1.0.0 <2.0.0"
+  # If the package is private, add:  secretRef: {name: ghcr-pull}   (a docker-registry Secret with a read:packages token)
+  #
+  # Optional: only accept charts that were signed by this repository's release workflow.
+  # verify:
+  #   provider: cosign
+  #   matchOIDCIdentity:
+  #     - issuer: ^https://token\.actions\.githubusercontent\.com$
+  #       subject: ^https://github\.com/OWNER/REPO/\.github/workflows/release\.yml@refs/tags/v.+$
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: tvdash
+  namespace: tvdash
+spec:
+  interval: 1h
+  chartRef:
+    kind: OCIRepository
+    name: tvdash
+  values:
+    tvs:
+      - name: kitchen
+        address: 192.168.1.50
+    hass:
+      url: https://ha.example.com
+    secret:
+      existingSecret: tvdash-secrets
+    doorbellCamera: camera.front_door
+    # imagePullSecrets: [{name: ghcr-pull}]     # when the image package is private
+    config:                                      # see config.example.json for all settings
+      people:
+        - {name: Anna, calendars: [anna]}
+        - {name: Ben, calendars: [ben_work, ben_private]}
+        - {name: Kids, calendars: [family_kids, school]}
+      bins_calendar: waste_collection
+      kids:
+        person: Kids
+        calendar: family_kids
+        away_marker: Mama
+        home_marker: Papa
+    ingress:                                     # Home Assistant outside the cluster reaches the service through this
+      enabled: true
+      className: nginx
+      hosts:
+        - host: tvdash.example.com
+      tls:
+        - secretName: tvdash-tls
+          hosts: [tvdash.example.com]
+    # hostNetwork: true      # when the pod network is not NATed into the TV's subnet (see README)

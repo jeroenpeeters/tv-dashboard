@@ -1,0 +1,24 @@
+# Local state, secrets and personal settings: none of this may ever be committed.
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.md
+CLAUDE.local.md
+config.local.json
+values.local.yaml
+*.local.yaml
+.state/
+out/
+
+# Tooling
+.venv/
+__pycache__/
+*.pyc
+.idea/
+*.iml
+.vscode/
+*.tgz
+
+# Personal working notes (Dutch hand-over note of the original project)
+frame-tv-handoff.md

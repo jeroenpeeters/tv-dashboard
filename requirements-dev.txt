@@ -1,0 +1,4 @@
+-r requirements.txt
+# tests (tests/) and the design mockups (mockups.py)
+httpx==0.28.1
+pillow==13.0.0

@@ -1,0 +1,69 @@
+# Home Assistant side. Put the key in secrets.yaml:   tvdash_key: "<the same value as TVDASH_API_KEY>"
+#
+# URL (used as http://tvdash:8080 below, replace it with yours):
+#      http://tvdash:8080                 HA and tvdash share a compose network
+#      http://127.0.0.1:8099              HA uses network_mode: host (see the compose example)
+#      https://tvdash.example.com         tvdash runs on Kubernetes behind the chart's ingress (or a LoadBalancer
+#                                         address, http://192.168.1.60:8080)
+
+rest_command:
+  tvdash_show_morning:            # the morning board for today; answers at once, the TV follows within ~10 s
+    url: "http://tvdash:8080/show"
+    method: post
+    headers: { X-Api-Key: !secret tvdash_key }
+    content_type: "application/json"
+    payload: '{"dashboard": "morning"}'
+  tvdash_show_doorbell:           # clock + weather with the latest doorbell still
+    url: "http://tvdash:8080/show"
+    method: post
+    headers: { X-Api-Key: !secret tvdash_key }
+    content_type: "application/json"
+    payload: '{"dashboard": "doorbell"}'
+  tvdash_hide:                    # dashboard away, the earlier art back (also after YouTube: the TV returns to art mode)
+    url: "http://tvdash:8080/hide"
+    method: post
+    headers: { X-Api-Key: !secret tvdash_key }
+    content_type: "application/json"
+    payload: "{}"
+  tvdash_youtube:                 # data: video (id or any YouTube URL), start (seconds, optional). Answers at once;
+                                  # the TV needs ~15-45 s to open the app and start the video
+    url: "http://tvdash:8080/youtube"
+    method: post
+    headers: { X-Api-Key: !secret tvdash_key }
+    content_type: "application/json"
+    payload: '{"video": "{{ video }}", "start": {{ start | default(0) }}}'
+  tvdash_youtube_stop:
+    url: "http://tvdash:8080/youtube/stop"
+    method: post
+    headers: { X-Api-Key: !secret tvdash_key }
+    content_type: "application/json"
+    payload: "{}"
+
+# A scene cannot call a service, so wrap the YouTube call in a script and run that from the scene,
+# a dashboard button or an automation.
+script:
+  haard_aan:
+    alias: "Haard op de tv"
+    sequence:
+      - service: rest_command.tvdash_youtube
+        data:
+          video: "https://www.youtube.com/watch?v=REPLACE_WITH_THE_VIDEO"
+  haard_uit:
+    alias: "Haard uit, terug naar de kunst"
+    sequence:
+      - service: rest_command.tvdash_youtube_stop
+      - service: rest_command.tvdash_hide
+
+automation:
+  - alias: "Ochtendbord aan"
+    trigger:
+      - platform: time
+        at: "06:30:00"
+    action:
+      - service: rest_command.tvdash_show_morning
+  - alias: "Ochtendbord weg"
+    trigger:
+      - platform: time
+        at: "09:00:00"
+    action:
+      - service: rest_command.tvdash_hide

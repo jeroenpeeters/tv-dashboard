@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>Ochtendbord</title>
+<style>
+  /* Dark theme (seen right after waking up). Background and accent colours are set from the weather in the script below. */
+  :root { --bg1:#1d2430; --bg2:#2b2a2e; --ink:#eef2f7; --dim:#a3afbf; --accent:#f2b866;
+          --card:rgba(255,255,255,.10); --line:rgba(255,255,255,.13); }
+  * { box-sizing:border-box; margin:0; }
+  html, body { width:100vw; height:100vh; overflow:hidden; color:var(--ink);
+    font-family:"Inter","Helvetica Neue",Arial,sans-serif; background:linear-gradient(170deg, var(--bg1), var(--bg2)); }
+
+  #scene { position:absolute; inset:0; overflow:hidden; pointer-events:none; }
+  #scene > * { position:absolute; }
+  #scene svg { width:100%; height:100%; }
+  .sun { right:-10vh; top:-18vh; width:78vh; height:78vh; border-radius:50%;
+    background:radial-gradient(circle, rgba(255,214,110,.5) 0 20%, rgba(255,190,90,.2) 24% 40%, rgba(255,180,70,0) 68%); }
+  .rays { right:-10vh; top:-18vh; width:78vh; height:78vh; border-radius:50%;
+    background:repeating-conic-gradient(from 0deg, rgba(255,205,90,.07) 0 5deg, transparent 5deg 15deg);
+    -webkit-mask-image:radial-gradient(circle, #000 18%, transparent 68%); mask-image:radial-gradient(circle, #000 18%, transparent 68%); }
+  .cloud { filter:blur(.25vh); }
+  .fog { height:16vh; border-radius:50%; background:rgba(255,255,255,.11); filter:blur(3.4vh); }
+
+  main { position:relative; height:100%; padding:5vh 4.5vw; display:grid; grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr) auto; gap:3.2vh; }
+
+  /* Top row: date, weather, clothing */
+  .top { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:1.8vh 2vw; min-width:0; }
+  .hello { font-size:2.6vh; color:var(--dim); letter-spacing:.16em; text-transform:uppercase; margin-bottom:.6vh; }
+  #date { font-size:5vh; font-weight:300; white-space:nowrap; }
+  #date::first-letter { text-transform:uppercase; }
+  .wx { display:flex; align-items:baseline; gap:1.2vw; white-space:nowrap; text-shadow:0 0 1.6vh rgba(8,12,18,.7); }
+  .temp { font-size:8.5vh; font-weight:200; letter-spacing:-.03em; line-height:1; }
+  .temp small { font-size:3.6vh; color:var(--dim); font-weight:300; margin-left:.2vw; }
+  .cond { font-size:4.2vh; font-weight:300; }
+  .flags { grid-column:1; display:flex; flex-wrap:wrap; align-content:flex-start; gap:1vh .8vw; }
+  .wear { grid-column:2; justify-self:end; display:flex; gap:.8vw; }
+  .wx { justify-self:end; }
+  .pill { display:flex; align-items:center; gap:.6vw; font-size:3.2vh; padding:.8vh 1.2vw .8vh .8vw; border-radius:5vh;
+    background:var(--card); border:1px solid rgba(255,255,255,.2); box-shadow:0 .4vh 2vh rgba(0,0,0,.25);
+    backdrop-filter:blur(1.2vh); white-space:nowrap; text-shadow:0 0 1vh rgba(8,12,18,.55); }
+  /* light disc behind the emoji, so dark ones (jacket, jeans) stay visible on the dark pills */
+  .pill .e, .flag .e { display:grid; place-items:center; width:4.9vh; height:4.9vh; border-radius:50%; background:rgba(255,255,255,.9); font-size:3vh; line-height:1; }
+  .pill.wet { background:rgba(255,255,255,.17); color:var(--accent); font-weight:500; }
+
+  /* Agenda, full width */
+  .agenda { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:2vw; min-height:0; }
+  .person { min-height:0; overflow:hidden; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.16);
+    border-radius:2.5vh; padding:3vh 2vw; backdrop-filter:blur(.8vh); }
+  .person h2 { font-size:3vh; font-weight:600; color:var(--dim); letter-spacing:.16em; text-transform:uppercase;
+    padding-bottom:1.8vh; margin-bottom:.6vh; border-bottom:1px solid var(--line); }
+  .item { display:grid; grid-template-columns:11vh minmax(0,1fr); gap:1vw; align-items:baseline; padding:1.15vh 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:0; }
+  .t { font-size:3.3vh; font-weight:600; color:var(--accent); font-variant-numeric:tabular-nums; }
+  .t.allday { white-space:nowrap; font-size:2.1vh; font-weight:500; color:var(--dim); letter-spacing:.08em; text-transform:uppercase; }
+  .title { font-size:3.3vh; line-height:1.25; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .wissel { display:flex; align-items:center; gap:.7vw; margin:1.2vh 0 .2vh; padding:.9vh 1vw; border-radius:1.8vh; white-space:nowrap;
+    background:var(--accent); color:#10151c; font-size:3vh; font-weight:600; }
+  .wissel .e { font-size:3.6vh; line-height:1; }
+  .empty { font-size:3.4vh; color:var(--dim); padding:1.8vh 0; }
+  .more { font-size:3vh; color:var(--dim); padding-top:1vh; }
+
+  /* Flags: left of the clothing pills, on the same row */
+  .flag { display:flex; align-items:center; gap:.6vw; font-size:3.2vh; font-weight:500; padding:.8vh 1.2vw .8vh .8vw; border-radius:5vh; white-space:nowrap;
+    background:var(--card); border:1px solid rgba(255,255,255,.2); box-shadow:0 .4vh 2vh rgba(0,0,0,.25); }
+  .flag.gft { background:rgba(110,190,110,.24); border-color:rgba(130,210,130,.65); }
+  .flag.pmd { background:rgba(240,150,70,.24); border-color:rgba(245,170,90,.7); }
+  .flag.papier { background:rgba(100,160,230,.24); border-color:rgba(130,180,240,.7); }
+  .flag.rest { background:rgba(200,200,200,.16); border-color:rgba(210,210,210,.45); }
+
+  /* Bottom: news as a plain bullet list over the full width */
+  #headlines { list-style:none; padding:0; display:flex; flex-direction:column; gap:.8vh; }
+  #headlines li { position:relative; padding-left:2vw; font-size:3vh; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #headlines li::before { content:'•'; position:absolute; left:.5vw; color:var(--accent); }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<main>
+  <section class="top">
+    <div>
+      <div class="hello">Goedemorgen</div>
+      <div id="date"></div>
+    </div>
+    <div class="wx" id="wx"></div>
+    <div class="flags" id="flags"></div>
+    <div class="wear" id="wear"></div>
+  </section>
+  <section class="agenda" id="agenda"></section>
+  <footer id="footer"><ul id="headlines"></ul></footer>
+</main>
+<script>
+  const D = window.DATA;
+  if (!D) { document.body.textContent = 'Geen data'; throw new Error('no data'); }
+  const $ = id => document.getElementById(id);
+  const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+  const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const W = D.weather;
+
+  // --- Weather: condition + temperature band drive the whole look -------------------------------
+  const cond = c =>
+    c === 0 ? ['clear', 'Zonnig'] : c === 1 ? ['clear', 'Overwegend zonnig'] : c === 2 ? ['partly', 'Half bewolkt'] :
+    c === 3 ? ['cloudy', 'Bewolkt'] : c <= 48 ? ['fog', 'Mist'] : c <= 57 ? ['drizzle', 'Motregen'] :
+    c <= 67 ? ['rain', 'Regen'] : c <= 77 ? ['snow', 'Sneeuw'] : c <= 82 ? ['rain', 'Buien'] :
+    c <= 86 ? ['snow', 'Sneeuwbuien'] : ['storm', 'Onweer'];
+  const [kind, text] = cond(W.code);
+
+  const mean = (W.min + W.max) / 2;
+  const band = mean < 6 ? 'cold' : mean < 12 ? 'cool' : mean < 18 ? 'mild' : 'warm';
+
+  // Dark base colours per condition (top, bottom); the temperature band tints them cold-blue ... warm-amber.
+  const BASE = {clear:['#1d2430','#2b2a2e'], partly:['#1f2631','#2a2f38'], cloudy:['#1f242c','#2c3139'], fog:['#232830','#323840'],
+                drizzle:['#1b222c','#26313d'], rain:['#171d27','#222c3a'], snow:['#222a36','#313c4b'], storm:['#14181f','#222730']};
+  const TONE = {cold:'#2f5f8f', cool:'#35546e', mild:'#7a5a2e', warm:'#9a4a22'};
+  const ACCENT = {cold:'#6db3f2', cool:'#7fb4dc', mild:'#f2b866', warm:'#ff9a5c'};
+  const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a, b, t) => '#' + hex(a).map((v, i) => Math.round(v + (hex(b)[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  const strength = {storm:.2, rain:.28, drizzle:.3, snow:.18, fog:.25}[kind] || .42;
+  const root = document.documentElement.style;
+  root.setProperty('--bg1', mix(BASE[kind][0], TONE[band], strength * .3));
+  root.setProperty('--bg2', mix(BASE[kind][1], TONE[band], strength));
+  root.setProperty('--accent', ACCENT[band]);
+
+  // --- Scene: sun, clouds, rain, snow ... (seeded, so the same day always looks the same) -------------
+  let seed = [...D.date].reduce((a, c) => a * 31 + c.charCodeAt(0) >>> 0, 7);
+  const rnd = () => { seed = seed + 0x6D2B79F5 >>> 0; let t = seed; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const scene = $('scene');
+  const CLOUD = 'M40 80 C15 80 10 50 35 45 C35 20 70 10 90 28 C105 5 150 12 155 42 C185 42 190 80 160 80 Z';
+  const cloud = (x, y, w, fill, op) => {
+    const c = el('div', 'cloud', `<svg viewBox="0 0 200 100"><path d="${CLOUD}" fill="${fill}" fill-opacity="${op}"/></svg>`);
+    Object.assign(c.style, {left: x + 'vw', top: y + 'vh', width: w + 'vw', height: (w * .5 * 16 / 9) + 'vh'}); scene.append(c);
+  };
+  const svgLayer = inner => { const d = el('div', '', `<svg viewBox="0 0 1000 562" preserveAspectRatio="none">${inner}</svg>`); d.style.inset = 0; scene.append(d); };
+  const rain = (n, len, op, col) => {
+    let s = '';
+    for (let i = 0; i < n; i++) { const x = rnd() * 1020, y = rnd() * 600, l = len * (.6 + rnd() * .8);
+      s += `<line x1="${x}" y1="${y}" x2="${x - l * .22}" y2="${y + l}" stroke="${col}" stroke-opacity="${op * (.5 + rnd() * .5)}" stroke-width="${1.2 + rnd()}" stroke-linecap="round"/>`; }
+    svgLayer(s);
+  };
+  const snow = n => {
+    let s = '';
+    for (let i = 0; i < n; i++) s += `<circle cx="${rnd() * 1000}" cy="${rnd() * 562}" r="${1 + rnd() * 2.4}" fill="#fff" fill-opacity="${.28 + rnd() * .3}"/>`;
+    svgLayer(s);
+  };
+  const sun = (small) => { const s = el('div', 'sun'), r = el('div', 'rays'); if (small) [s, r].forEach(n => Object.assign(n.style, {width: '56vh', height: '56vh', top: '-10vh', right: '8vw'})); scene.append(r, s); };
+
+  if (kind === 'clear') sun(false);
+  if (kind === 'partly') { sun(true); cloud(60, 3, 24, '#fff', .15); cloud(80, 14, 16, '#fff', .12); }
+  if (kind === 'cloudy') { cloud(55, 2, 28, '#fff', .13); cloud(78, 10, 22, '#dfe6ee', .12);  }
+  if (kind === 'fog') for (let i = 0; i < 5; i++) { const f = el('div', 'fog'); Object.assign(f.style, {left: (-10 + rnd() * 40) + 'vw', width: (60 + rnd() * 50) + 'vw', top: (8 + i * 19) + 'vh'}); scene.append(f); }
+  if (kind === 'drizzle') { cloud(52, 0, 30, '#9fb2c6', .2); cloud(76, 8, 24, '#aebfd0', .18); rain(120, 34, .24, '#9db4cf'); }
+  if (kind === 'rain') { cloud(48, -2, 32, '#7f93a9', .3); cloud(74, 6, 26, '#8ea1b5', .26); rain(220, 52, .3, '#9db4cf'); }
+  if (kind === 'snow') { cloud(52, 0, 30, '#fff', .16); cloud(76, 8, 24, '#fff', .13); snow(130); }
+  if (kind === 'storm') {
+    cloud(46, -3, 34, '#6b7686', .4); cloud(72, 4, 28, '#788496', .36); rain(260, 58, .3, '#8aa0bb');
+  }
+
+  // --- Top row ---------------------------------------------------------------------------------------
+  const d = new Date(D.date + 'T12:00:00');
+  $('date').textContent = d.toLocaleDateString('nl-NL', {weekday: 'long', day: 'numeric', month: 'long'});
+  const num = n => n < 0 ? '−' + (-n) : String(n);
+  const range = W.min < 0 || W.max < 0 ? `${num(W.min)} tot ${num(W.max)}` : `${W.min}–${W.max}`;
+  $('wx').innerHTML = `<span class="temp">${range}<small>°C</small></span><span class="cond">${text}</span>`;
+  const wear = $('wear');
+  const pill = (e, t, cls) => wear.append(el('div', 'pill ' + (cls || ''), `<span class="e">${e}</span>${t}`));
+  pill(W.legs === 'Korte broek' ? '🩳' : '👖', W.legs);
+  pill(W.jacket === 'Geen jas' ? '👕' : '🧥', W.jacket);
+  if (W.umbrella) pill('☂️', 'Regenjas', 'wet');
+
+  // --- Agenda, full width -----------------------------------------------------------------------------
+  const ag = $('agenda');
+  for (const p of D.people) {
+    const col = el('div', 'person');
+    col.append(el('h2', '', esc(p.name)));
+    if (p.wissel) col.append(el('div', 'wissel', `<span class="e">🔄</span>Wisseldag naar ${esc(p.wissel)}`));
+    if (!p.items.length && !p.wissel) col.append(el('div', 'empty', 'Niets gepland'));
+    p.items.forEach(i =>
+      col.append(el('div', 'item', `<div class="t ${i.time ? '' : 'allday'}">${i.time || 'hele dag'}</div><div class="title">${esc(i.title)}</div>`)));
+    ag.append(col);
+  }
+  // --- Flags (bins, bags) sit on the left, the clothing pills on the right --------------------------------------
+  const flag = (e, t, cls) => $('flags').append(el('div', 'flag ' + (cls || ''), `<span class="e">${e}</span>${esc(t)}`));
+  const BIN = {GFT: ['🌿', 'gft'], PMD: ['🧴', 'pmd'], Papier: ['📰', 'papier']};
+  D.bins.forEach(b => flag((BIN[b] || ['🗑️'])[0], b, (BIN[b] || [0, 'rest'])[1]));
+  D.bags.forEach(b => flag('🎒', b));
+
+  // --- News: plain bullet list; gone when the feed was unavailable ---------------------------------------
+  (D.news || []).forEach(n => $('headlines').append(el('li', '', esc(n))));
+  if (!(D.news || []).length) $('footer').remove();
+
+  // Last step, once pills and news have taken their space. The agenda matters more than the news:
+  // when a card overflows, the news goes first; only if that is not enough are items replaced by "+ n meer".
+  const room = col => col.getBoundingClientRect().bottom - parseFloat(getComputedStyle(col).paddingBottom);
+  const lastItem = col => [...col.querySelectorAll('.item')].pop();
+  const overflowing = col => { const last = lastItem(col); return !!last && last.getBoundingClientRect().bottom > room(col); };
+  if ([...ag.children].some(overflowing) && $('footer')) {
+    $('footer').remove();
+    document.querySelector('main').style.gridTemplateRows = 'auto minmax(0,1fr)';   // no empty row (and gap) where the news was
+  }
+  for (const col of ag.children) {
+    if (!overflowing(col)) continue;
+    const items = [...col.querySelectorAll('.item')];
+    const more = el('div', 'more', '');
+    col.append(more);
+    let hidden = 0;
+    do { items.pop().remove(); more.textContent = `+ ${++hidden} meer`; }
+    while (items.length && more.getBoundingClientRect().bottom > room(col));
+  }
+
+  document.body.dataset.ready = '1';
+</script>
+</body>
+</html>

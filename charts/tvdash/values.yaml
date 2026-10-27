@@ -1,0 +1,88 @@
+# Default values for tvdash. Override them in your own (private) values / HelmRelease, never in this file.
+
+image:
+  # The release workflow replaces OWNER with the GitHub owner that publishes the chart, so the packaged chart
+  # points at the image that was built together with it.
+  repository: ghcr.io/OWNER/tvdash
+  tag: ""                       # default: the chart's appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []            # needed when the ghcr.io package is private
+
+# The TVs the service may touch. Callers (Home Assistant) choose one by name and can never make the service
+# talk to another address. The first one is the default. At least one is required.
+tvs: []
+#  - name: kitchen
+#    address: 192.168.1.50
+
+# Home Assistant, for the calendars and camera stills.
+hass:
+  url: ""                       # for example https://ha.example.com or http://192.168.1.4:8123
+
+secret:
+  # Name of an existing Secret with the key `api-key` (the key Home Assistant sends as X-Api-Key) and
+  # optionally `hass-token` (a Home Assistant long-lived access token). Use this with SOPS / External Secrets.
+  existingSecret: ""
+  # Or let the chart create the Secret from these. They end up in the release values, so only do this with
+  # values that are themselves encrypted at rest.
+  apiKey: ""
+  hassToken: ""
+
+# Settings of the morning board (people, calendars, hand-over day, bins ...). The same JSON as in
+# config.example.json of the repository, written as YAML. Leave empty to switch the morning board off.
+config: {}
+
+doorbellCamera: ""              # camera entity for the doorbell dashboard, e.g. camera.front_door
+fallbackArt: ""                 # art to show on /hide when no earlier art was recorded (GET /art lists the ids)
+extraEnv: []                    # more environment variables, as in a container spec
+
+# What the service remembers per TV: the art to go back to and a pairing token when the TV hands one out.
+# Without a volume this is lost when the pod restarts.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 100Mi
+
+service:
+  type: ClusterIP               # LoadBalancer or NodePort when Home Assistant runs outside the cluster
+  port: 8080
+  nodePort: null
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+#  - host: tvdash.example.com
+#    paths:
+#      - path: /
+#        pathType: Prefix
+  tls: []
+#  - secretName: tvdash-tls
+#    hosts: [tvdash.example.com]
+
+# The TV only accepts connections from its own subnet. When the pod network is not source-NATed into that
+# subnet, run the pod on the node's network instead (the node must be in the TV's subnet, and port 8080 free).
+hostNetwork: false
+
+# Chromium renders the board: it needs memory while a render runs, and nothing in between.
+resources:
+  requests:
+    cpu: 50m
+    memory: 384Mi
+  limits:
+    memory: 1Gi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}

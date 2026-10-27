@@ -1,0 +1,24 @@
+tvdash {{ .Chart.AppVersion }} is installed as {{ include "tvdash.fullname" . }}.
+
+Home Assistant calls it with the header  X-Api-Key: <the api-key from the Secret>:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  {{ if $.Values.ingress.tls }}https{{ else }}http{{ end }}://{{ .host }}/show
+{{- end }}
+{{- else }}
+  http://{{ include "tvdash.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/show   (inside the cluster)
+{{- if eq .Values.service.type "ClusterIP" }}
+  Home Assistant outside the cluster needs the ingress or a LoadBalancer/NodePort service.
+{{- end }}
+{{- end }}
+
+Check it:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "tvdash.fullname" . }} 8080:{{ .Values.service.port }}
+           curl http://127.0.0.1:8080/health
+{{- if not .Values.config }}
+
+No `config` is set: the morning board is switched off (the doorbell dashboard and YouTube still work).
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+
+persistence.enabled is false: the art to go back to after /hide is lost when the pod restarts.
+{{- end }}

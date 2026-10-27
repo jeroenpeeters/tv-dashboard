@@ -1,0 +1,7 @@
+# Runtime dependencies of the service (the image installs exactly this).
+fastapi==0.162.0
+uvicorn==0.54.0
+playwright==1.64.1
+# The Samsung art channel. Pinned to the commit this was built and tested against.
+samsungframetv @ git+https://github.com/NickWaterton/samsung-tv-ws-api.git@7f6fb8f5f06d8e13bb2e588a2d685d7a4a6177a0
+casttube==0.2.1

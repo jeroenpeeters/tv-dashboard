@@ -1,0 +1,31 @@
+# Add this service next to Home Assistant in your existing docker-compose.yml (and the volume at the bottom).
+# Put the two secrets in the .env file that sits next to that compose file:
+#   TVDASH_API_KEY=<a long random string, for example: openssl rand -hex 32>
+#   TVDASH_HASS_TOKEN=<a Home Assistant long-lived access token>
+services:
+  tvdash:
+    image: ghcr.io/OWNER/tvdash:1.0.0   # the image built by this repository's release workflow (replace OWNER and the version)
+    container_name: tvdash
+    restart: unless-stopped
+    environment:
+      API_KEY: ${TVDASH_API_KEY:?set TVDASH_API_KEY}
+      # The TVs this service may touch, by name. Callers can never make it talk to another address.
+      TVS: kitchen=192.168.1.50
+      # How *this container* reaches Home Assistant: its compose service name, or http://<docker-host-ip>:8123.
+      HASS_URL: http://homeassistant:8123
+      HASS_TOKEN: ${TVDASH_HASS_TOKEN:?set TVDASH_HASS_TOKEN}
+      TVDASH_CONFIG: /config/tvdash.json
+      DOORBELL_CAMERA: camera.front_door
+      # Art to show on /hide when no earlier art was recorded. List the ids with GET /art.
+      # FALLBACK_ART: MY_F0001
+    volumes:
+      - ./tvdash-config.json:/config/tvdash.json:ro     # see config.example.json in this repository
+      - tvdash-data:/data          # what to go back to + the TV pairing token (when the TV hands one out)
+    # Only needed when Home Assistant runs with network_mode: host. It then calls http://127.0.0.1:8099
+    # (not published to the LAN). When HA is on the same compose network it calls http://tvdash:8080 and
+    # you can leave this out.
+    ports:
+      - "127.0.0.1:8099:8080"
+
+volumes:
+  tvdash-data:

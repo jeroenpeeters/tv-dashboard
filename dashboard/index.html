@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>TV Dashboard</title>
+<style>
+  :root { --bg:#0e1116; --fg:#f2f4f8; --dim:#8b93a1; --card:#171b22; --accent:#ffb84d; }
+  * { box-sizing:border-box; margin:0; }
+  html, body { width:100vw; height:100vh; background:var(--bg); color:var(--fg);
+    font-family:"Inter","Helvetica Neue",Arial,sans-serif; overflow:hidden; }
+  main { height:100%; padding:7vh 6vw; display:grid; grid-template-rows:auto 1fr; gap:5vh; }
+  header { display:flex; align-items:flex-end; justify-content:space-between; }
+  #clock { font-size:22vh; font-weight:200; letter-spacing:-.02em; line-height:1; }
+  #date { font-size:5vh; color:var(--dim); text-align:right; }
+  #date::first-letter { text-transform:uppercase; }
+  .body { display:grid; grid-template-columns:1fr; gap:2.5vw; min-height:0; }
+  .has-cam .body { grid-template-columns:1.15fr 1fr; }
+  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:2.5vw; min-height:0; }
+  .has-cam .grid { grid-template-columns:repeat(2,1fr); grid-template-rows:repeat(2,1fr); }
+  .cam { display:none; position:relative; border-radius:2.5vh; overflow:hidden; background:var(--card); min-height:0; }
+  .has-cam .cam { display:block; }
+  .cam img { width:100%; height:100%; object-fit:cover; display:block; }
+  .cam .tag { position:absolute; left:2vw; bottom:3vh; padding:1vh 1.2vw; border-radius:1.2vh;
+    background:rgba(14,17,22,.72); font-size:3.2vh; letter-spacing:.08em; text-transform:uppercase; }
+  .card { background:var(--card); border-radius:2.5vh; padding:4vh 2.5vw; display:flex; flex-direction:column; justify-content:space-between; }
+  .label { font-size:3vh; color:var(--dim); text-transform:uppercase; letter-spacing:.12em; }
+  .has-cam .value { font-size:10vh; }
+  .value { font-size:12vh; font-weight:300; line-height:1; }
+  .value small { font-size:5vh; color:var(--dim); margin-left:.4vw; }
+  .accent { color:var(--accent); }
+  .sub { font-size:3.4vh; color:var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div id="clock">--:--</div>
+    <div id="date"></div>
+  </header>
+  <div class="body">
+  <div class="cam"><img id="camimg" alt=""><div class="tag">Voordeur</div></div>
+  <section class="grid">
+    <div class="card"><div class="label">Buiten</div><div class="value accent" id="temp">--<small>°C</small></div><div class="sub" id="cond">&nbsp;</div></div>
+    <div class="card"><div class="label">Gevoelstemp.</div><div class="value" id="feels">--<small>°C</small></div><div class="sub">&nbsp;</div></div>
+    <div class="card"><div class="label">Wind</div><div class="value" id="wind">--<small>km/u</small></div><div class="sub" id="winddir">&nbsp;</div></div>
+    <div class="card"><div class="label">Neerslag</div><div class="value" id="rain">--<small>mm</small></div><div class="sub">&nbsp;</div></div>
+  </section>
+  </div>
+</main>
+<script>
+  const q = new URLSearchParams(location.search);
+  const lat = q.get('lat') || '52.37', lon = q.get('lon') || '4.90';   // Amsterdam by default
+  const WMO = {0:'Onbewolkt',1:'Overwegend helder',2:'Half bewolkt',3:'Bewolkt',45:'Mist',48:'Rijpmist',
+    51:'Lichte motregen',53:'Motregen',55:'Zware motregen',61:'Lichte regen',63:'Regen',65:'Zware regen',
+    71:'Lichte sneeuw',73:'Sneeuw',75:'Zware sneeuw',80:'Buien',81:'Zware buien',82:'Hevige buien',95:'Onweer'};
+  const $ = id => document.getElementById(id);
+  const cam = q.get('cam');
+  if (cam) { document.body.classList.add('has-cam'); $('camimg').src = cam; }
+  const now = new Date();
+  $('clock').textContent = now.toLocaleTimeString('nl-NL', {hour:'2-digit', minute:'2-digit'});
+  $('date').textContent = now.toLocaleDateString('nl-NL', {weekday:'long', day:'numeric', month:'long'});
+
+  const dirs = ['N','NO','O','ZO','Z','ZW','W','NW'];
+  fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,precipitation&timezone=auto`)
+    .then(r => r.json()).then(({current:c}) => {
+      $('temp').firstChild.textContent = Math.round(c.temperature_2m);
+      $('feels').firstChild.textContent = Math.round(c.apparent_temperature);
+      $('wind').firstChild.textContent = Math.round(c.wind_speed_10m);
+      $('winddir').textContent = dirs[Math.round(c.wind_direction_10m / 45) % 8];
+      $('rain').firstChild.textContent = c.precipitation.toFixed(1);
+      $('cond').textContent = WMO[c.weather_code] || '';
+    })
+    .catch(() => {})
+    .finally(() => { document.body.dataset.ready = '1'; });
+</script>
+</body>
+</html>

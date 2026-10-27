@@ -1,0 +1,31 @@
+{
+  "timezone": "Europe/Amsterdam",
+
+  "people": [
+    {"name": "Anna", "calendars": ["anna"]},
+    {"name": "Ben", "calendars": ["ben_work", "ben_private"]},
+    {"name": "Kids", "calendars": ["family_kids", "school"]}
+  ],
+
+  "bins_calendar": "waste_collection",
+
+  "kids": {
+    "person": "Kids",
+    "calendar": "family_kids",
+    "away_marker": "Mama",
+    "home_marker": "Papa",
+    "home_weekdays": [2, 3],
+    "home_friday_if_weekend_home": true,
+    "away_label": "mama",
+    "home_label": "papa"
+  },
+
+  "bag_rules": [
+    {"match": "rugby", "label": "Rugbyspullen"},
+    {"match": "zwem", "label": "Zwemspullen"},
+    {"match": "gym", "label": "Gymspullen"}
+  ],
+
+  "news_feed": "https://feeds.nos.nl/nosnieuwsalgemeen",
+  "news_items": 3
+}
