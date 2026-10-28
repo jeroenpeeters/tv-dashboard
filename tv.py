@@ -187,19 +187,54 @@ def _app(host: str, method: str = "GET") -> tuple[int, bytes]:
     return _http(host, REST_PORT, f"/api/v2/applications/{YOUTUBE_APP_ID}", method, b"" if method == "POST" else None)
 
 
-def youtube_state(host: str) -> str:
-    """'running' or 'stopped'."""
+def _app_status(host: str) -> dict:
     status, body = _app(host)
     if status != 200:
         raise TVError(f"{host}: app status request failed (HTTP {status})")
-    return "running" if json.loads(body).get("running") else "stopped"
+    return json.loads(body)
+
+
+def youtube_state(host: str) -> str:
+    """'running' or 'stopped' (an app that lingers in the background counts as running)."""
+    return "running" if _app_status(host).get("running") else "stopped"
+
+
+def _dial(host: str) -> tuple[str, str | None]:
+    """(DIAL state, screen id). The screen id appears ~10 s after the app is started and is only valid while the
+    state is 'running': a stopped or backgrounded app can keep publishing the id of its previous session."""
+    status, body = _http(host, DIAL_PORT, "/ws/apps/YouTube")
+    if status != 200:
+        return "unknown", None
+    state = re.search(rb"<state>([^<]+)</state>", body)
+    screen = re.search(rb"<screenId>([^<]+)</screenId>", body)
+    return (state.group(1).decode() if state else "unknown"), (screen.group(1).decode() if screen else None)
 
 
 def _screen_id(host: str) -> str | None:
-    """Published by the YouTube app once it is up (it takes ~15 s after the start)."""
-    status, body = _http(host, DIAL_PORT, "/ws/apps/YouTube")
-    match = re.search(rb"<screenId>([^<]+)</screenId>", body) if status == 200 else None
-    return match.group(1).decode() if match else None
+    """The screen id of a YouTube app that is really up, else None."""
+    state, screen = _dial(host)
+    return screen if state == "running" else None
+
+
+def _fresh_app(host: str, wait: float, sleep) -> None:
+    """Make sure the YouTube app is running in the foreground; a lingering background instance is closed first.
+
+    After the TV has left the app (video ended, back to art mode) the REST API still says running=true but with
+    visible=false, and videos sent to that session are accepted by YouTube and then never played.
+    """
+    info = _app_status(host)
+    if info.get("running"):
+        if info.get("visible") and _dial(host)[0] == "running":
+            return
+        status, _ = _app(host, "DELETE")
+        if status != 200:
+            raise TVError(f"{host}: the TV refused to close the lingering YouTube app (HTTP {status})")
+        deadline = time.monotonic() + min(wait, 15)
+        while _app_status(host).get("running") and time.monotonic() < deadline:
+            sleep(1)
+    status, _ = _app(host, "POST")
+    if status != 200:
+        raise TVError(f"{host}: the TV refused to start the YouTube app (HTTP {status})")
 
 
 def youtube_start(host: str, video: str, start: int = 0, *, wait: float = 45.0, session_factory=None, sleep=time.sleep) -> str:
@@ -208,10 +243,7 @@ def youtube_start(host: str, video: str, start: int = 0, *, wait: float = 45.0, 
     Takes up to `wait` seconds: the app needs a while before it accepts a video. Works from art mode.
     """
     video_id = parse_youtube_id(video)
-    if youtube_state(host) != "running":
-        status, _ = _app(host, "POST")
-        if status != 200:
-            raise TVError(f"{host}: the TV refused to start the YouTube app (HTTP {status})")
+    _fresh_app(host, wait, sleep)
 
     deadline = time.monotonic() + wait
     screen_id = _screen_id(host)

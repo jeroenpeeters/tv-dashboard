@@ -172,24 +172,35 @@ class YouTubeIds(unittest.TestCase):
 
 
 class FakeYouTubeTV:
-    """The TV's REST API (port 8001) and DIAL service (port 8080), as far as the YouTube flow uses them."""
+    """The TV's REST API (port 8001) and DIAL service (port 8080), as far as the YouTube flow uses them.
 
-    def __init__(self, running=False, polls_until_ready=3):
-        self.running, self.ready_after, self.polls, self.log = running, polls_until_ready, 0, []
+    Like the real TV: a fresh start is visible, DIAL says "running" at once and publishes the screen id after a
+    while; closing the app removes the id. `background=True` is the app after the TV left it: running but not
+    visible, DIAL "stopped", and still publishing the id of the previous session.
+    """
+
+    def __init__(self, running=False, polls_until_ready=3, background=False):
+        self.running, self.visible, self.ready_after, self.polls, self.log = running, not background, polls_until_ready, 0, []
+        self.stale = background
 
     def http(self, host, port, path, method="GET", body=None):
         self.log.append((port, method))
         if port == tv.REST_PORT:
             if method == "POST":
-                self.running, self.polls = True, 0
+                self.running, self.visible, self.stale, self.polls = True, True, False, 0
                 return 200, b"HTTP/"
             if method == "DELETE":
-                self.running = False
+                self.running, self.visible, self.stale = False, False, False
                 return 200, b"true\n"
-            return 200, json.dumps({"running": self.running}).encode()
+            return 200, json.dumps({"running": self.running, "visible": self.visible}).encode()
         self.polls += 1
-        ready = self.running and self.polls >= self.ready_after
-        return 200, b"<service><additionalData><screenId>SCR</screenId></additionalData></service>" if ready else b"<service/>"
+        state = "running" if self.running and self.visible else "stopped"
+        if self.stale:
+            screen = "OLD"
+        else:
+            screen = "SCR" if self.running and self.polls >= self.ready_after else None
+        extra = f"<screenId>{screen}</screenId>" if screen else ""
+        return 200, f"<service><state>{state}</state><additionalData>{extra}</additionalData></service>".encode()
 
 
 class FakeSession:
@@ -221,6 +232,20 @@ class YouTubeFlow(unittest.TestCase):
         self.start(fake)
         self.assertNotIn((tv.REST_PORT, "POST"), fake.log)
         self.assertEqual(len(FakeSession.played), 1)
+
+    def test_an_app_that_lingers_in_the_background_is_restarted_not_trusted(self):
+        # The TV left the app: REST says running but not visible, DIAL says stopped yet still shows the old screen id.
+        # A video sent there is accepted by YouTube and never played.
+        fake = FakeYouTubeTV(running=True, polls_until_ready=3, background=True)
+        self.start(fake)
+        self.assertEqual(FakeSession.played, [("SCR", "dQw4w9WgXcQ", "0")])      # the new session, never "OLD"
+        rest = [m for port, m in fake.log if port == tv.REST_PORT and m != "GET"]
+        self.assertEqual(rest, ["DELETE", "POST"])
+
+    def test_a_stale_screen_id_is_not_used_while_dial_says_stopped(self):
+        fake = FakeYouTubeTV(running=True, background=True)
+        with unittest.mock.patch.object(tv, "_http", fake.http):
+            self.assertIsNone(tv._screen_id(HOST))
 
     def test_an_app_that_never_gets_ready_is_reported(self):
         fake = FakeYouTubeTV(running=False, polls_until_ready=10**9)

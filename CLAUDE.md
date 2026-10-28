@@ -72,7 +72,9 @@ Verified on the real Frame (a video played): (1) start the app with `POST http:/
 
 What does **not** work here, so do not try it again: `POST …:8080/ws/apps/YouTube` (DIAL launch) answers **403** in every variant and in art mode and TV mode alike; `run_app` over the WebSocket remote does not start the app (the remote channel also needs an "Allow" on the TV, `ms.channel.timeOut` otherwise). Ids/URLs are validated (`parse_youtube_id`) before anything reaches the TV.
 
-Observed: after closing the app the TV sometimes returns to art mode by itself and sometimes stays in TV mode, so `hide` checks `get_artmode()` before restoring (calling `set_artmode(True)` while already in art mode times out). The final `tv.youtube_start` code path is covered by tests against a fake TV; the pieces were each run against the real TV, but not yet as one call from the container.
+**Stale background session (found in production):** after the TV has left the app (video ended, back to art mode) the REST status is `running: true, visible: false`, DIAL says `<state>stopped</state>` and still publishes the `screenId` of the old session. A video sent to that id is accepted by YouTube (no error, the call returns in ~1 s) and never plays. So "ready" means DIAL `state == running` **and** a `screenId`, and a running-but-invisible app is closed (`DELETE`) and started fresh (`_fresh_app`). On a fresh start DIAL is `running` and the app `visible: true` at once, the `screenId` follows after ~11 s. A start that returns within a second is therefore suspicious.
+
+Observed: after closing the app the TV sometimes returns to art mode by itself and sometimes stays in TV mode, so `hide` checks `get_artmode()` before restoring (calling `set_artmode(True)` while already in art mode times out). The `tv.youtube_start` code path is covered by tests against a fake TV that mimics the stale background session; the start/stop/DIAL timing was probed on the real TV, but the final code has not yet played a video as one call.
 
 ### Morning board
 
