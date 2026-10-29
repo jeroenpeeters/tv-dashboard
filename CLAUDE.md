@@ -26,6 +26,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python tvdash.py push --host 192.168.1.50            # upload out/dashboard.png and show it
 .venv/bin/python tvdash.py hide --host 192.168.1.50 [--fallback MY_F0001]   # dashboard away, previous art back
 .venv/bin/python tvdash.py art --host 192.168.1.50             # list the art on the TV (to choose a --fallback)
+.venv/bin/python tvdash.py wake --host 192.168.1.50            # wake the TV from standby (Wake-on-LAN), waits until it answers
 .venv/bin/python tvdash.py youtube --host 192.168.1.50 --video <id or URL> [--start 30]
 .venv/bin/python tvdash.py youtube-stop --host 192.168.1.50
 .venv/bin/python mockups.py                                    # ten made-up boards (weather types, bins, hand-over days) -> out/mockups/, no HA needed
@@ -57,6 +58,12 @@ Auth: header `X-Api-Key` = `$API_KEY`; the service refuses to start without it. 
 - `server.py`: FastAPI, see above. Only one render/TV job runs at a time (single-thread executor).
 - `morning.py`: the morning board's data and its settings (`Config`, `parse_config`, cached `config()` from `$TVDASH_CONFIG`). Nothing about a household is hardcoded in the code: people, calendars, hand-over markers, bins calendar, bag rules, news feed and timezone all come from that JSON file. The clothing thresholds stay constants at the top.
 - `charts/tvdash`: the Helm chart (one replica, `Recreate`, PVC for `/data`, ConfigMap from `config:`, Secret only through `secret.existingSecret` or inline values, strict `values.schema.json`, read-only root filesystem with an `emptyDir` on `/tmp`). `charts/tvdash/ci/test-values.yaml` holds the made-up values CI renders with.
+
+### Waking the TV (`tv.py`)
+
+A Frame that was switched off (black screen) is in deep standby: it does not answer on the network at all (seen in production: the 06:30 `show` died after 41 s on a connect timeout to port 8002, and the board only appeared after someone woke the TV by hand). So `show_image` and `youtube_start` call `wake(host)` first: if the REST API (`http://<tv>:8001/api/v2/`) does not answer or says `PowerState != "on"`, it sends a Wake-on-LAN magic packet every 5 s (up to 75 s), waits for `on` and then 5 s more for the art channel. `hide` deliberately does not wake the TV: lighting a screen at 09:00 just to put art back is worse than leaving it dark.
+
+The MAC address is not configured: it is read from the TV (`device.wifiMac`) whenever the TV answers and kept in `STATE_DIR/mac-<host>.txt`; a TV that has never answered cannot be woken (clear error). From a pod a broadcast stays inside the pod network, so the packet also goes unicast to the TV and to `a.b.c.255`; `hostNetwork` makes the plain broadcast work. The TV needs "Power on with Mobile" (Settings > General > Network > Expert Settings). After a wake the recorded `previous.artmode` is forced to `on`, so `hide` returns to art instead of the channel the TV booted into. A TV that answers but keeps reporting `standby` (2025 Frames do that in art mode) is let through. Covered by tests with a fake sleeping TV; **not yet verified on the real TV in standby** (it was on when this was written).
 
 ### Showing and restoring art (`tv.py`)
 

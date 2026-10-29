@@ -171,6 +171,79 @@ class YouTubeIds(unittest.TestCase):
                 tv.parse_youtube_id(value)
 
 
+class FakeSleepingTV:
+    """Answers `probe` like the REST API: nothing while asleep, PowerState "standby", then "on" once enough magic
+    packets were sent (`packets_needed`)."""
+
+    def __init__(self, asleep=True, packets_needed=1, mac="AA:BB:CC:DD:EE:FF", standby_forever=False):
+        self.asleep, self.needed, self.mac, self.forever = asleep, packets_needed, mac, standby_forever
+        self.packets = []
+
+    def probe(self, host):
+        if not self.asleep:
+            return {"PowerState": "on", "wifiMac": self.mac}
+        if len(self.packets) >= self.needed:
+            return {"PowerState": "standby", "wifiMac": self.mac} if self.forever else {"PowerState": "on", "wifiMac": self.mac}
+        return None
+
+    def send(self, host, mac):
+        self.packets.append((host, mac))
+
+
+class Waking(StateTestCase):
+    def wake(self, fake, **kwargs):
+        return tv.wake(HOST, probe=fake.probe, send=fake.send, sleep=lambda s: None, settle=0, **kwargs)
+
+    def test_a_tv_that_is_on_is_left_alone_and_its_address_is_remembered(self):
+        fake = FakeSleepingTV(asleep=False)
+        self.assertFalse(self.wake(fake))
+        self.assertEqual(fake.packets, [])
+        self.assertEqual(tv._known_mac(HOST), "aa:bb:cc:dd:ee:ff")
+
+    def test_a_sleeping_tv_gets_a_magic_packet_with_the_address_learned_earlier(self):
+        self.wake(FakeSleepingTV(asleep=False))                 # an earlier run saw it awake
+        fake = FakeSleepingTV(asleep=True, mac="")              # now it does not answer at all
+        self.assertTrue(self.wake(fake))
+        self.assertEqual(fake.packets, [(HOST, "aa:bb:cc:dd:ee:ff")])
+
+    def test_an_unknown_address_is_reported_instead_of_guessed(self):
+        with self.assertRaisesRegex(tv.TVError, "MAC address is not known"):
+            self.wake(FakeSleepingTV(asleep=True, mac=""))
+
+    def test_a_tv_that_never_wakes_is_reported(self):
+        self.wake(FakeSleepingTV(asleep=False))
+        with self.assertRaisesRegex(tv.TVError, "did not wake up"):
+            self.wake(FakeSleepingTV(asleep=True, packets_needed=10**9, mac=""), wait=0.05)
+
+    def test_a_tv_that_answers_but_keeps_saying_standby_is_let_through(self):
+        fake = FakeSleepingTV(asleep=True, standby_forever=True)
+        self.wake(FakeSleepingTV(asleep=False))
+        self.assertTrue(self.wake(fake, wait=0.05))
+
+    def test_the_magic_packet_has_the_standard_shape(self):
+        sent = []
+
+        class Sock:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def setsockopt(self, *a): pass
+            def sendto(self, data, target): sent.append((data, target))
+
+        with unittest.mock.patch.object(tv.socket, "socket", return_value=Sock()):
+            tv.send_magic_packet("192.168.1.50", "aa:bb:cc:dd:ee:ff")
+        packet = sent[0][0]
+        self.assertEqual(packet, b"\xff" * 6 + bytes.fromhex("aabbccddeeff") * 16)
+        self.assertEqual({target[0] for _, target in sent}, {"192.168.1.50", "255.255.255.255", "192.168.1.255"})
+
+    def test_showing_wakes_the_tv_first_and_goes_back_to_art_afterwards(self):
+        art = FakeArt(current="USER_1", artmode="off")           # it booted into the TV channel
+        with unittest.mock.patch.object(tv, "wake", return_value=True) as wake, unittest.mock.patch.object(tv, "connect", return_value=art):
+            tv.show_image(HOST, b"png")
+        wake.assert_called_once_with(HOST)
+        self.assertEqual(tv.load_state(HOST)["previous"]["artmode"], "on")
+        self.assertEqual(art.artmode, "on")
+
+
 class FakeYouTubeTV:
     """The TV's REST API (port 8001) and DIAL service (port 8080), as far as the YouTube flow uses them.
 
@@ -216,6 +289,9 @@ class FakeSession:
 class YouTubeFlow(unittest.TestCase):
     def setUp(self):
         FakeSession.played = []
+        patcher = unittest.mock.patch.object(tv, "wake", return_value=False)   # the TV is awake; waking has its own tests
+        self.wake = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def start(self, fake, **kwargs):
         with unittest.mock.patch.object(tv, "_http", fake.http):

@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -15,6 +16,95 @@ YOUTUBE_APP_ID = "111299001912"
 
 class TVError(RuntimeError):
     pass
+
+
+# --- Waking the TV ----------------------------------------------------------------------------------
+# A Frame that has been switched off (screen black, no art) is in standby: it does not answer on the network at all,
+# so nothing can be shown until it is woken. Only Wake-on-LAN gets it out of there. The MAC address comes from the
+# TV itself (REST `wifiMac`) and is kept in STATE_DIR, so there is nothing to configure; it is learned the first
+# time the TV answers. The TV needs "Power on with Mobile" (Settings > General > Network > Expert Settings).
+
+_MAC = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
+WOL_PORTS = (9, 7)
+
+
+def _device_info(host: str, timeout: float = 4.0) -> dict | None:
+    """The `device` block of the TV's REST API, or None when the TV does not answer (standby)."""
+    try:
+        with urllib.request.urlopen(f"http://{host}:{REST_PORT}/api/v2/", timeout=timeout) as response:
+            return json.load(response).get("device", {})
+    except (OSError, ValueError):
+        return None
+
+
+def _known_mac(host: str, device: dict | None = None) -> str | None:
+    """The TV's MAC address: from what it just told us (and remembered), else from an earlier run."""
+    path = STATE_DIR / f"mac-{host}.txt"
+    mac = (device or {}).get("wifiMac") or ""
+    if _MAC.match(mac):
+        mac = mac.lower()
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            if not path.exists() or path.read_text().strip() != mac:
+                path.write_text(mac + "\n")
+        except OSError:
+            pass   # waking is a convenience; a read-only state directory must not break showing
+        return mac
+    try:
+        saved = path.read_text().strip()
+    except OSError:
+        return None
+    return saved if _MAC.match(saved) else None
+
+
+def send_magic_packet(host: str, mac: str) -> None:
+    """Wake-on-LAN. From a pod a broadcast never leaves the pod network, so the packet also goes straight to the TV
+    (and to the subnet's broadcast address); `hostNetwork` in the chart makes the plain broadcast work as well."""
+    packet = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+    targets = [host, "255.255.255.255"]
+    octets = host.split(".")
+    if len(octets) == 4 and all(o.isdigit() for o in octets):
+        targets.append(".".join(octets[:3] + ["255"]))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for target in targets:
+            for port in WOL_PORTS:
+                try:
+                    sock.sendto(packet, (target, port))
+                except OSError:
+                    pass   # e.g. no route for one of the targets; the others may still arrive
+
+
+def wake(host: str, *, wait: float = 75.0, settle: float = 5.0, sleep=time.sleep, probe=_device_info, send=send_magic_packet) -> bool:
+    """Make sure the TV is out of standby. True when it had to be woken, False when it was on already.
+
+    Sends the magic packet every few seconds until the TV answers with PowerState "on" (a TV from deep standby
+    needs 10-30 s), then waits `settle` seconds because the art channel comes up a moment later. A TV that answers
+    but keeps saying "standby" is let through: 2025 Frames report that while they show art.
+    """
+    device = probe(host)
+    mac = _known_mac(host, device)
+    if device and device.get("PowerState", "on") == "on":
+        return False
+    if not mac:
+        raise TVError(f"{host}: the TV is asleep and its MAC address is not known yet, so it cannot be woken "
+                      "(it is learned the first time the TV answers; switch it on once)")
+    deadline, resend = time.monotonic() + wait, 0.0
+    while True:
+        if time.monotonic() >= resend:
+            send(host, mac)
+            resend = time.monotonic() + 5
+        sleep(2)
+        device = probe(host)
+        if device and device.get("PowerState", "on") == "on":
+            sleep(settle)
+            return True
+        if time.monotonic() >= deadline:
+            break
+    if device:
+        return True
+    raise TVError(f"{host}: the TV did not wake up within {wait:.0f} s (is 'Power on with Mobile' on, and does the "
+                  "wake-up packet reach it? from a pod that may need hostNetwork)")
 
 
 # --- Art ------------------------------------------------------------------------------------------
@@ -75,11 +165,18 @@ def _capture(art, ours: list[str]) -> dict:
 
 
 def show_image(host: str, image: bytes, art=None) -> str:
-    """Upload `image`, show it, and remember the art that was showing before (only for the first dashboard)."""
-    art = art or connect(host)
+    """Upload `image`, show it, and remember the art that was showing before (only for the first dashboard).
+
+    A TV that is switched off is woken first (Wake-on-LAN)."""
+    woke = False
+    if art is None:
+        woke = wake(host)
+        art = connect(host)
     state = load_state(host)
     if not state["showing"]:
         state["previous"] = _capture(art, state["uploads"])
+        if woke:
+            state["previous"]["artmode"] = "on"   # it was asleep: afterwards it goes back to art, not to the channel it booted into
         state["showing"] = True
         save_state(host, state)   # saved before touching the TV, so a failure half way still can be undone
         if _slideshow_active(state["previous"]["slideshow"]):
@@ -243,6 +340,7 @@ def youtube_start(host: str, video: str, start: int = 0, *, wait: float = 45.0, 
     Takes up to `wait` seconds: the app needs a while before it accepts a video. Works from art mode.
     """
     video_id = parse_youtube_id(video)
+    wake(host, sleep=sleep)
     _fresh_app(host, wait, sleep)
 
     deadline = time.monotonic() + wait

@@ -124,6 +124,9 @@ def main() -> None:
     ys = sub.add_parser("youtube-stop", help="stop the YouTube app on the TV")
     ys.add_argument("--host", required=True)
 
+    w = sub.add_parser("wake", help="wake the TV from standby (Wake-on-LAN) and wait until it answers")
+    w.add_argument("--host", required=True)
+
     args = ap.parse_args()
     try:
         if args.cmd == "push":
@@ -135,6 +138,8 @@ def main() -> None:
                 print(item["content_id"], item["category"], item["date"], "(ours)" if item["ours"] else "")
         elif args.cmd == "youtube":
             print("started", tv.youtube_start(args.host, args.video, args.start))
+        elif args.cmd == "wake":
+            print("woken" if tv.wake(args.host) else "the TV was on already")
         elif args.cmd == "youtube-stop":
             print("stopped" if tv.youtube_stop(args.host) else "YouTube was not running")
         else:
