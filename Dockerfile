@@ -1,7 +1,7 @@
 # Dashboards for a Samsung The Frame, driven by Home Assistant.
 # Build:  docker build -t tvdash .
 # Run:    see deploy/docker-compose.example.yml or charts/tvdash
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 # The release workflow overrides these through docker/metadata-action; the source label links the
 # package on ghcr.io to the repository.
