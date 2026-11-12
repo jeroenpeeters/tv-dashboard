@@ -99,7 +99,7 @@ a values file that is committed in the clear. The chart can create the Secret fr
   For Home Assistant outside the cluster use the ingress, or `service.type: LoadBalancer`/`NodePort`. The API
   key is the only gate: use TLS on anything that leaves the cluster.
 
-**Waking the TV.** If the Frame has been switched off, `/show` and `/youtube` first wake it with Wake-on-LAN
+**Waking the TV.** If the Frame has been switched off, `/show`, `/youtube` and (while the dashboard is still up) `/hide` first wake it with Wake-on-LAN
 (up to 75 s). The MAC address is learned from the TV the first time it answers, so there is nothing to
 configure, but the TV needs *Power on with Mobile* (Settings → General → Network → Expert Settings). A
 broadcast does not leave the pod network, so the service also sends the packet straight to the TV; if that does

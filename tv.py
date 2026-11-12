@@ -198,11 +198,19 @@ def show_image(host: str, image: bytes, art=None) -> str:
 def hide(host: str, fallback: str | None = None, art=None) -> dict:
     """Remove our dashboard and put the art back that was showing before it.
 
+    While our dashboard is up the TV is woken first when it sleeps (a hide that fails leaves the board on the
+    screen); with nothing of ours to remove a sleeping TV is left alone.
+
     `fallback` is the content id to show when nothing was recorded (for example a dashboard that was put up
     by an older version of this tool). Without either, the TV simply picks its own art after our image is gone.
     """
-    art = art or connect(host)
     state = load_state(host)
+    if art is None:
+        if state["showing"] or state["uploads"]:
+            wake(host)   # our board is still up: the TV has to be awake to take it away (asleep, it would show it again later)
+        elif _device_info(host) is None:
+            return {"restored": None, "slideshow": False, "artmode": None, "asleep": True}   # nothing of ours to remove: do not light the screen
+        art = connect(host)
     previous = state["previous"] or {}
     target = previous.get("content_id") or fallback
     if target in state["uploads"]:

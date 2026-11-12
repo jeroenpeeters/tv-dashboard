@@ -235,6 +235,31 @@ class Waking(StateTestCase):
         self.assertEqual(packet, b"\xff" * 6 + bytes.fromhex("aabbccddeeff") * 16)
         self.assertEqual({target[0] for _, target in sent}, {"192.168.1.50", "255.255.255.255", "192.168.1.255"})
 
+    def test_hide_wakes_a_sleeping_tv_while_the_board_is_still_up(self):
+        art = FakeArt(current="USER_2")
+        tv.show_image(HOST, b"png", art)                         # the dashboard is up
+        with unittest.mock.patch.object(tv, "wake", return_value=True) as wake, unittest.mock.patch.object(tv, "connect", return_value=art):
+            result = tv.hide(HOST)
+        wake.assert_called_once_with(HOST)
+        self.assertEqual(result["restored"], "USER_2")
+        self.assertFalse(tv.load_state(HOST)["showing"])
+
+    def test_hide_leaves_a_sleeping_tv_alone_when_there_is_nothing_to_remove(self):
+        with unittest.mock.patch.object(tv, "_device_info", return_value=None), \
+                unittest.mock.patch.object(tv, "wake") as wake, unittest.mock.patch.object(tv, "connect") as connect:
+            result = tv.hide(HOST, fallback="USER_9")
+        wake.assert_not_called()
+        connect.assert_not_called()
+        self.assertTrue(result["asleep"])
+
+    def test_hide_with_nothing_to_remove_still_restores_art_on_a_tv_that_is_on(self):
+        art = FakeArt(current="USER_2", artmode="off")
+        with unittest.mock.patch.object(tv, "_device_info", return_value={"PowerState": "on"}), \
+                unittest.mock.patch.object(tv, "wake") as wake, unittest.mock.patch.object(tv, "connect", return_value=art):
+            result = tv.hide(HOST, fallback="USER_1")
+        wake.assert_not_called()
+        self.assertEqual((result["restored"], art.current, art.artmode), ("USER_1", "USER_1", "on"))
+
     def test_showing_wakes_the_tv_first_and_goes_back_to_art_afterwards(self):
         art = FakeArt(current="USER_1", artmode="off")           # it booted into the TV channel
         with unittest.mock.patch.object(tv, "wake", return_value=True) as wake, unittest.mock.patch.object(tv, "connect", return_value=art):
