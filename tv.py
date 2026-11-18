@@ -12,6 +12,9 @@ from pathlib import Path
 STATE_DIR = Path(os.environ.get("TVDASH_STATE") or Path(__file__).parent / ".state")
 REST_PORT, DIAL_PORT = 8001, 8080   # the TV's REST API (start/stop apps) and its DIAL service (gives the YouTube screen id)
 YOUTUBE_APP_ID = "111299001912"
+KIOSK_APP_ID = "TvDash0001.TvDash"        # our own Tizen app (see tizen/), sideloaded onto the TV
+KIOSK_CHANNEL = "com.tvdash.kiosk"
+KIOSK_CLIENT = b"tvdash-app"
 
 
 class TVError(RuntimeError):
@@ -145,6 +148,17 @@ def save_state(host: str, state: dict) -> None:
     tmp.replace(_state_path(host))
 
 
+def _delete_ours(art, content_ids: list[str]) -> None:
+    """Delete our uploads that are still on the TV. A delete for an id that is gone (removed by hand, or by the TV)
+    never gets an answer and times out, which would keep `hide` from ever finishing."""
+    if not content_ids:
+        return
+    present = {item["content_id"] for item in art.available()}
+    gone = [c for c in content_ids if c in present]
+    if gone:
+        art.delete_list(gone)
+
+
 def _slideshow_active(slideshow: dict | None) -> bool:
     return bool(slideshow) and slideshow.get("value") not in (None, "", "off")
 
@@ -184,9 +198,7 @@ def show_image(host: str, image: bytes, art=None) -> str:
 
     content_id = art.upload(image, matte="none", portrait_matte="none", file_type="png")
     art.select_image(content_id, show=True)
-    old = [i for i in state["uploads"] if i != content_id]
-    if old:
-        art.delete_list(old)
+    _delete_ours(art, [i for i in state["uploads"] if i != content_id])
     # set_artmode gets no reply (and times out) when the TV is already in art mode.
     if art.get_artmode() != "on":
         art.set_artmode(True)
@@ -208,6 +220,10 @@ def hide(host: str, fallback: str | None = None, art=None) -> dict:
     if art is None:
         if state["showing"] or state["uploads"]:
             wake(host)   # our board is still up: the TV has to be awake to take it away (asleep, it would show it again later)
+            try:
+                kiosk_stop(host)   # a live page is closed with the rest of the dashboard
+            except TVError:
+                pass   # no kiosk app, or no answer: the art below still has to come back
         elif _device_info(host) is None:
             return {"restored": None, "slideshow": False, "artmode": None, "asleep": True}   # nothing of ours to remove: do not light the screen
         art = connect(host)
@@ -222,8 +238,7 @@ def hide(host: str, fallback: str | None = None, art=None) -> dict:
     if _slideshow_active(slideshow):
         category = int(str(slideshow.get("category_id") or "MY-C0002")[-1])
         art.set_slideshow_status(int(slideshow["value"]), slideshow.get("type") == "shuffleslideshow", category)
-    if state["uploads"]:
-        art.delete_list(state["uploads"])
+    _delete_ours(art, state["uploads"])
 
     # Back to art mode (after YouTube the TV is in TV mode), unless it was in TV mode before the dashboard.
     wanted = previous.get("artmode") or "on"
@@ -245,6 +260,122 @@ def list_art(host: str, art=None) -> list[dict]:
             seen.add(cid)
             out.append({"content_id": cid, "category": item.get("category_id"), "date": item.get("image_date"), "ours": cid in ours})
     return out
+
+
+# --- Live web page (our Tizen kiosk app) ----------------------------------------------------------
+# The TV hands no launch arguments to an app (REST ignores a body, the WebSocket launch starts nothing), so the page is
+# sent after the start: the app listens on a channel on the TV, the service connects to the same channel and says which
+# page to open. The channel needs no pairing. The page replaces the app's own page, so every new page is a fresh start.
+
+def _kiosk_url(url: str) -> str:
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password or len(url) > 2000:
+        raise ValueError("a live page needs an http(s) address without credentials")
+    return url.strip()
+
+
+def _kiosk_status(host: str) -> dict | None:
+    """The kiosk app's REST status, None when it is not installed on the TV."""
+    status, body = _http(host, REST_PORT, f"/api/v2/applications/{KIOSK_APP_ID}")
+    if status == 404:
+        return None
+    if status != 200:
+        raise TVError(f"{host}: kiosk app status request failed (HTTP {status})")
+    return json.loads(body)
+
+
+def kiosk_state(host: str) -> str:
+    """'running', 'stopped' or 'not installed' (the companion app on the TV)."""
+    info = _kiosk_status(host)
+    if info is None:
+        return "not installed"
+    return "running" if info.get("running") else "stopped"
+
+
+def kiosk_stop(host: str) -> bool:
+    """Close the kiosk app. False when it was not running."""
+    info = _kiosk_status(host)
+    if not info or not info.get("running"):
+        return False
+    _http(host, REST_PORT, f"/api/v2/applications/{KIOSK_APP_ID}", "DELETE")
+    return True
+
+
+def _kiosk_send(host: str, url: str, wait: float, connect_ws, sleep) -> None:
+    """Connect to the app's channel, wait until the app itself is on it, and send the page."""
+    import base64
+
+    def is_app(client: dict) -> bool:
+        try:
+            return base64.b64decode(client["attributes"]["name"]) == KIOSK_CLIENT
+        except (KeyError, ValueError, TypeError):
+            return False
+
+    name = base64.b64encode(b"tvdash-service").decode()
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        try:
+            socket = connect_ws(f"ws://{host}:{REST_PORT}/api/v2/channels/{KIOSK_CHANNEL}?name={name}", timeout=3)
+        except Exception:   # the channel only answers once the app is up
+            sleep(1)
+            continue
+        try:
+            present = False
+            while time.monotonic() < deadline and not present:
+                try:
+                    message = json.loads(socket.recv())
+                except Exception:   # a read timeout: keep waiting for the app
+                    continue
+                data = message.get("data") or {}
+                if message.get("event") == "ms.channel.connect":
+                    present = any(is_app(client) for client in data.get("clients", []))
+                elif message.get("event") == "ms.channel.clientConnect":
+                    present = is_app(data)
+            if present:
+                socket.send(json.dumps({"method": "ms.channel.emit",
+                                        "params": {"event": "tvdash.show", "to": "broadcast", "data": {"url": url}}}))
+                sleep(0.5)
+                return
+        finally:
+            try:
+                socket.close()
+            except Exception:
+                pass
+    raise TVError(f"{host}: the kiosk app did not come up within {wait:.0f} s")
+
+
+def kiosk_show(host: str, url: str, *, wait: float = 40.0, art=None, connect_ws=None, sleep=time.sleep) -> str:
+    """Show a web page live, full screen, in our Tizen app. The art that was showing is remembered for `hide`.
+
+    A sleeping TV is woken first. The app is always started fresh: after its last page it sits inside that page and
+    cannot be told another one.
+    """
+    url = _kiosk_url(url)
+    if connect_ws is None:
+        from websocket import create_connection as connect_ws
+    woke = wake(host, sleep=sleep) if art is None else False
+    if _kiosk_status(host) is None:
+        raise TVError(f"{host}: the tvdash kiosk app is not installed on the TV (see tizen/)")
+    art = art or connect(host)
+    state = load_state(host)
+    if not state["showing"]:
+        state["previous"] = _capture(art, state["uploads"])
+        if woke:
+            state["previous"]["artmode"] = "on"
+        state["showing"] = True
+        save_state(host, state)
+        if _slideshow_active(state["previous"]["slideshow"]):
+            art.set_slideshow_status(0)
+
+    kiosk_stop(host)
+    deadline = time.monotonic() + 10
+    while (_kiosk_status(host) or {}).get("running") and time.monotonic() < deadline:
+        sleep(1)
+    status, _ = _http(host, REST_PORT, f"/api/v2/applications/{KIOSK_APP_ID}", "POST", b"")
+    if status != 200:
+        raise TVError(f"{host}: the TV refused to start the kiosk app (HTTP {status})")
+    _kiosk_send(host, url, wait, connect_ws, sleep)
+    return urllib.parse.urlsplit(url).hostname
 
 
 # --- YouTube ----------------------------------------------------------------------------------------

@@ -93,6 +93,10 @@ spec:
             - name: DOORBELL_CAMERA
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.urlHosts }}
+            - name: URL_HOSTS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.fallbackArt }}
             - name: FALLBACK_ART
               value: {{ . | quote }}

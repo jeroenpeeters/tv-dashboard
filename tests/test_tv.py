@@ -119,6 +119,17 @@ class ShowAndHide(StateTestCase):
         self.assertEqual(art.current, "USER_1")
 
 
+class VanishedUpload(StateTestCase):
+    def test_hide_finishes_when_our_image_was_removed_from_the_tv_by_hand(self):
+        art = FakeArt(current="USER_2")
+        board = tv.show_image(HOST, b"png", art)
+        art.images.discard(board)                       # someone deleted it on the TV; deleting it again would never be answered
+        tv.hide(HOST, art=art)
+        self.assertNotIn(("delete", [board]), art.calls)
+        self.assertEqual(art.current, "USER_2")
+        self.assertFalse(tv.load_state(HOST)["showing"])
+
+
 class UnknownPrevious(StateTestCase):
     def test_state_from_an_older_version_has_no_previous_art(self):
         (tv.STATE_DIR / f"uploads-{HOST}.json").write_text(json.dumps(["MY_F0001"]))
@@ -238,7 +249,8 @@ class Waking(StateTestCase):
     def test_hide_wakes_a_sleeping_tv_while_the_board_is_still_up(self):
         art = FakeArt(current="USER_2")
         tv.show_image(HOST, b"png", art)                         # the dashboard is up
-        with unittest.mock.patch.object(tv, "wake", return_value=True) as wake, unittest.mock.patch.object(tv, "connect", return_value=art):
+        with unittest.mock.patch.object(tv, "wake", return_value=True) as wake, unittest.mock.patch.object(tv, "connect", return_value=art), \
+                unittest.mock.patch.object(tv, "kiosk_stop", return_value=False):
             result = tv.hide(HOST)
         wake.assert_called_once_with(HOST)
         self.assertEqual(result["restored"], "USER_2")

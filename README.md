@@ -24,6 +24,9 @@ All calls need the header `X-Api-Key`. Bodies are JSON.
 | Call | What it does |
 | --- | --- |
 | `POST /show {dashboard: "morning"\|"doorbell", date?, camera?, tv?, wait?}` | Render and show. Answers at once (202), works in the background (~5-30 s). Remembers the art that was showing. |
+| `POST /show {dashboard: "url", url}` | Screenshot a web page and show it the same way. Only pages on hosts listed in `URL_HOSTS` (below), because this service fetches them; it is a still picture, so a clock or animation on the page stands still. |
+| `POST /show {dashboard: "url", url, live: true}` | The same page, opened live by the TV in the tvdash kiosk app (`tizen/`): full screen, no bars, the remote's arrow keys reach the page. Needs the app on the TV (below), is 1080p, and the page has to work in the TV's Chromium 76. |
+| `POST /live {url, tv?, wait?}` | Start the tvdash companion app on the TV and open `url` in it, live. A sleeping TV is woken. `/hide` closes it again. `GET /status` shows whether the app is installed (`companion`). |
 | `POST /hide {tv?, fallback?, wait?}` | Remove the dashboard and put the earlier art back (also after YouTube). |
 | `POST /youtube {video, start?, tv?, wait?}` | Start a YouTube video (id or any URL), also from art mode. The app needs 15-45 s. |
 | `POST /youtube/stop {tv?, wait?}` | Close the YouTube app. |
@@ -44,6 +47,7 @@ Environment variables:
 | `TVS` | required; `name=address,name=address`, the first is the default |
 | `HASS_URL`, `HASS_TOKEN` | Home Assistant URL and a long-lived access token (calendars, camera stills) |
 | `TVDASH_CONFIG` | path of the JSON file with the morning board's settings (below); checked at startup |
+| `URL_HOSTS` | hosts whose pages `{"dashboard": "url"}` may render and show as a picture, comma separated (chart: `urlHosts`). Empty: off. Live pages (`/live`) are not limited by it. Redirects to other hosts are not followed, and the query string (often a key) is kept out of logs and `/status` |
 | `DOORBELL_CAMERA` | camera entity for the doorbell dashboard |
 | `FALLBACK_ART` | art id to show on `/hide` when no earlier art was recorded |
 | `TVDASH_STATE` | where per-TV state is kept (a volume; `/data` in the image) |
@@ -53,6 +57,18 @@ people and their Home Assistant calendars, an optional bins calendar, an optiona
 who live in two homes, "pack this bag" rules matched on event titles, the timezone and the news feed. The
 file is validated strictly (typos and unsafe entity ids are rejected), and without it only the doorbell
 dashboard and YouTube work.
+
+### Live pages (kiosk app)
+
+`"live": true` needs a small Tizen app on the TV; it cannot be installed from the cluster. The TV must be in
+developer mode, and the app has to be signed with a Samsung certificate that contains the TV's DUID. See
+[`tizen/README.md`](tizen/README.md). The service starts the app and then tells it which page to open over a channel
+on the TV, so only the service has to reach the TV (port 8001), never the other way round.
+
+Live pages are drawn by the TV's own browser engine (Chromium 76, 1920x1080), so they are softer than the 4K picture
+and a page that relies on `clamp()`, `min()`, `aspect-ratio`, `inset`, `dvh` or flexbox `gap`, or on `?.` / `??`
+in script, looks wrong there. Without `live` the page is rendered in the service with a current browser and shown as
+a picture.
 
 ## Run it
 
@@ -91,7 +107,8 @@ a values file that is committed in the clear. The chart can create the Secret fr
 `secret.hassToken`, but then they are part of your release values.
 
 **Networking.** Two things must be reachable:
-- *The TV from the pod.* The Frame only accepts connections from its own subnet. Most clusters source-NAT
+- *The TV from the pod.* The pod needs TCP 8001 (apps and the channel the companion app listens on), 8002 (art) and
+  8080 (YouTube) on the TV, plus UDP 9 and 7 to wake it. The Frame only accepts connections from its own subnet. Most clusters source-NAT
   pod traffic to the node address, which works when the nodes are in the TV's subnet. If the TV is on another
   VLAN, or your CNI does not NAT, set `hostNetwork: true` (port 8080 must then be free on the node) and make
   sure the node can reach the TV on ports 8001, 8002 and 8080.

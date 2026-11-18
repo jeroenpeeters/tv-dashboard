@@ -46,9 +46,9 @@ jobs:
       - run: helm template ci charts/tvdash -f charts/tvdash/ci/test-values.yaml > /dev/null
       - name: The chart refuses to render without the required settings
         run: |
-          for args in "--set tvs=null" "--set secret.apiKey=" "--set image.repository=ghcr.io/OWNER/tvdash"; do
-            if helm template ci charts/tvdash -f charts/tvdash/ci/test-values.yaml $args > /dev/null 2>&1; then
-              echo "expected a failure for: $args"; exit 1
+          for setting in "tvs=null" "secret.apiKey=" "image.repository=ghcr.io/OWNER/tvdash"; do
+            if helm template ci charts/tvdash -f charts/tvdash/ci/test-values.yaml --set "$setting" > /dev/null 2>&1; then
+              echo "expected a failure for: $setting"; exit 1
             fi
           done
 
@@ -73,10 +73,18 @@ jobs:
           docker run -d --name tvdash --read-only --tmpfs /tmp:uid=1000,gid=1000 --cap-drop ALL \
             --security-opt no-new-privileges --user 1000:1000 -p 8080:8080 \
             -v "$PWD/config.example.json:/config/tvdash.json:ro" \
-            -e API_KEY=ci-only -e TVS=tv=192.0.2.1 -e TVDASH_CONFIG=/config/tvdash.json tvdash:ci
-          for i in $(seq 30); do curl -fs localhost:8080/health && break; sleep 1; done
+            -e API_KEY=ci-only -e TVS=tv=192.0.2.1 -e TVDASH_CONFIG=/config/tvdash.json \
+            -e URL_HOSTS=recipes.example.com tvdash:ci
+          for _ in $(seq 30); do curl -fs localhost:8080/health && break; sleep 1; done
           curl -fs localhost:8080/health
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/status)" = 401
+          # The live page (companion app) is refused before the TV is touched: no key, bad addresses, rendered page on another host
+          code() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' "$@"; }
+          test "$(code -d '{"url":"https://recipes.example.com/"}' localhost:8080/live)" = 401
+          test "$(code -H 'X-Api-Key: ci-only' -d '{"url":"file:///etc/passwd"}' localhost:8080/live)" = 400
+          test "$(code -H 'X-Api-Key: ci-only' -d '{"url":"https://user:pw@example.com/"}' localhost:8080/live)" = 400
+          test "$(code -H 'X-Api-Key: ci-only' -d '{"dashboard":"url","url":"https://other.example.org/"}' localhost:8080/show)" = 403
+          docker exec tvdash python -c "import websocket, tv, tvdash"
           docker exec tvdash python -c "import tvdash, pathlib; tvdash.render(tvdash.DASHBOARD.as_uri(), pathlib.Path('/tmp/t.png'))"
           docker logs tvdash
 

@@ -32,6 +32,7 @@ secret:
 config: {}
 
 doorbellCamera: ""              # camera entity for the doorbell dashboard, e.g. camera.front_door
+urlHosts: []                    # hosts whose web pages this service may render and show as a picture ({"dashboard": "url"}), e.g. [recipes.example.com]; empty = off. Not used for live pages
 fallbackArt: ""                 # art to show on /hide when no earlier art was recorded (GET /art lists the ids)
 extraEnv: []                    # more environment variables, as in a container spec
 
@@ -63,8 +64,11 @@ ingress:
 #  - secretName: tvdash-tls
 #    hosts: [tvdash.example.com]
 
+# The pod has to reach the TV on TCP 8001 (apps, and the channel the companion app listens on), 8002 (art) and
+# 8080 (YouTube), and to wake a sleeping TV it sends Wake-on-LAN packets (UDP 9 and 7) to it.
 # The TV only accepts connections from its own subnet. When the pod network is not source-NATed into that
-# subnet, run the pod on the node's network instead (the node must be in the TV's subnet, and port 8080 free).
+# subnet, or the Wake-on-LAN packet does not arrive, run the pod on the node's network instead (the node must be
+# in the TV's subnet, and port 8080 free).
 hostNetwork: false
 
 # Chromium renders the board: it needs memory while a render runs, and nothing in between.

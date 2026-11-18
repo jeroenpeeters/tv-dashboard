@@ -22,3 +22,11 @@ __pycache__/
 
 # Personal working notes (Dutch hand-over note of the original project)
 frame-tv-handoff.md
+
+# Tizen app build output (the signed package is made locally, never committed)
+*.wgt
+tizen/.buildResult/
+tizen/.tmp/
+*.local.js
+tizen/.manifest.tmp
+*.local.sh

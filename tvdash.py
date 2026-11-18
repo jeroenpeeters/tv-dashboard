@@ -36,8 +36,29 @@ def fetch_camera(entity_id: str, out: Path, base_url: str) -> None:
     out.write_bytes(urllib.request.urlopen(req, timeout=20).read())
 
 
-def render(url: str, out: Path, data: dict | None = None) -> None:
-    from playwright.sync_api import sync_playwright
+def redact_url(url: str) -> str:
+    """The URL without query and fragment: those often carry a key, so they never go into a log or an error."""
+    parts = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", "")) + ("?…" if parts.query else "")
+
+
+def check_url(url: str, allowed_hosts: set[str] | None) -> str:
+    """A page we may show: http(s), no credentials in the URL and, unless `allowed_hosts` is None, on a host the
+    operator listed. Returns the URL."""
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError("not an http(s) URL")
+    if parts.username or parts.password:
+        raise ValueError("a URL with credentials in it is not accepted")
+    if allowed_hosts is not None and parts.hostname.lower() not in allowed_hosts:
+        raise PermissionError(f"{parts.hostname.lower()} is not in URL_HOSTS")
+    return url.strip()
+
+
+def render(url: str, out: Path, data: dict | None = None, allowed_hosts: set[str] | None = None) -> None:
+    """Screenshot `url` to `out`. With `allowed_hosts` (a page from outside) page navigations, redirects included,
+    are only followed to those hosts, and a page that keeps a connection open does not hold the render up."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
 
     with sync_playwright() as p:
         # Locally the system Chrome is used; in the container TVDASH_BROWSER_CHANNEL="" selects Playwright's own Chromium.
@@ -46,7 +67,22 @@ def render(url: str, out: Path, data: dict | None = None) -> None:
         page = browser.new_page(viewport={"width": WIDTH // 2, "height": HEIGHT // 2}, device_scale_factor=2)
         if data is not None:
             page.add_init_script(f"window.DATA = {json.dumps(data)};")
-        page.goto(url, wait_until="networkidle")
+        if allowed_hosts is not None:
+            def guard(route):
+                request = route.request
+                if request.is_navigation_request() and (urllib.parse.urlsplit(request.url).hostname or "").lower() not in allowed_hosts:
+                    route.abort()
+                else:
+                    route.continue_()
+            page.route("**/*", guard)
+            page.goto(url, wait_until="load")
+            try:
+                page.wait_for_load_state("networkidle", timeout=8000)
+            except PlaywrightTimeout:
+                pass   # live pages (clock, event stream) are never idle; what is drawn by now is what we show
+            page.wait_for_timeout(1000)
+        else:
+            page.goto(url, wait_until="networkidle")
         if url.startswith("file:"):
             page.wait_for_selector("body[data-ready='1']", timeout=15000)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +110,17 @@ def make_doorbell(out: Path, camera: str | None, hass_url: str | None) -> None:
         fetch_camera(camera, still, hass_url)
         url += "?" + urllib.parse.urlencode({"cam": still.as_uri()})
     render(url, out)
+
+
+def make_url(out: Path, url: str, allowed_hosts: set[str]) -> None:
+    """Screenshot a web page (a recipe, a dashboard of another system). `url` is checked against `allowed_hosts`.
+
+    Errors are re-raised without the URL's query: the page's key must not end up in logs or in /status."""
+    check_url(url, allowed_hosts)
+    try:
+        render(url, out, allowed_hosts=allowed_hosts)
+    except Exception as error:
+        raise tv.TVError(f"could not render {redact_url(url)}: {type(error).__name__}") from None
 
 
 def push(host: str, image: Path) -> None:
@@ -113,6 +160,12 @@ def main() -> None:
     h.add_argument("--host", required=True)
     h.add_argument("--fallback", help="content id to show when no previous art was recorded (see `art`)")
 
+    su = sub.add_parser("show-url", help="screenshot a web page and show it on the TV (hide it with `hide`)")
+    su.add_argument("--url", required=True)
+    su.add_argument("--host", help="TV to push to; without it the PNG is only rendered")
+    su.add_argument("--out", type=Path, default=OUT_DIR / "page.png")
+    su.add_argument("--live", action="store_true", help="open the page live in the TV's kiosk app instead of showing a picture (needs --host)")
+
     ls = sub.add_parser("art", help="list the art on the TV (to choose a --fallback)")
     ls.add_argument("--host", required=True)
 
@@ -138,6 +191,16 @@ def main() -> None:
                 print(item["content_id"], item["category"], item["date"], "(ours)" if item["ours"] else "")
         elif args.cmd == "youtube":
             print("started", tv.youtube_start(args.host, args.video, args.start))
+        elif args.cmd == "show-url" and args.live:
+            if not args.host:
+                sys.exit("--live needs --host")
+            print("showing", tv.kiosk_show(args.host, args.url), "live")
+        elif args.cmd == "show-url":
+            hostname = (urllib.parse.urlsplit(args.url).hostname or "").lower()
+            make_url(args.out, args.url, {hostname})   # on the command line you chose the URL yourself
+            print(f"wrote {args.out}")
+            if args.host:
+                push(args.host, args.out)
         elif args.cmd == "wake":
             print("woken" if tv.wake(args.host) else "the TV was on already")
         elif args.cmd == "youtube-stop":

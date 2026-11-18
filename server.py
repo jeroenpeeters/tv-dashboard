@@ -8,6 +8,9 @@ Configuration (environment):
   DOORBELL_CAMERA  camera entity for the doorbell dashboard
   FALLBACK_ART     content id to show on `hide` when nothing was recorded (optional)
   TVDASH_STATE     where tokens and "what to go back to" are kept (a volume)
+  URL_HOSTS        hosts whose pages may be rendered by this service and shown as a picture ({"dashboard": "url"}),
+                   comma separated ("recipes.example.com"). Empty: that is off. It does not apply to live pages
+                   (/live, "live": true): the TV opens those itself, so any http(s) address is accepted there.
   TVDASH_CONFIG    JSON file with the household settings of the morning board (people, calendars, ...);
                    see config.example.json. Checked at startup.
 """
@@ -50,6 +53,10 @@ def _parse_tvs(spec: str) -> dict[str, str]:
 TVS = _parse_tvs(os.environ.get("TVS") or os.environ.get("TV_HOST") or "")
 if not TVS:
     raise RuntimeError("TVS is not set, for example TVS=living_room=192.168.1.50")
+URL_HOSTS = {h.strip().lower() for h in os.environ.get("URL_HOSTS", "").split(",") if h.strip()}
+for _host in URL_HOSTS:
+    if not re.fullmatch(r"[a-z0-9.-]+", _host):
+        raise RuntimeError(f"not a valid host in URL_HOSTS: {_host!r}")
 DOORBELL_CAMERA = os.environ.get("DOORBELL_CAMERA")
 FALLBACK_ART = os.environ.get("FALLBACK_ART") or None
 
@@ -78,10 +85,18 @@ def _resolve(name: str | None) -> tuple[str, str]:
 
 class ShowBody(BaseModel):
     tv: str | None = None
-    dashboard: Literal["morning", "doorbell"] = "morning"
+    dashboard: Literal["morning", "doorbell", "url"] = "morning"
+    url: str | None = Field(None, max_length=2000, description='url only: the page to show (its host must be in URL_HOSTS)')
+    live: bool = Field(False, description="url only: open the page live in the TV's kiosk app (interactive, 1080p) instead of showing a 4K picture of it")
     date: dt.date | None = Field(None, description="morning only: the day to show, default today")
     camera: str | None = Field(None, pattern=r"^camera\.[a-z0-9_]+$", description="doorbell only: default $DOORBELL_CAMERA")
     wait: bool = Field(False, description="answer when the TV shows it (15-30 s) instead of right away")
+
+
+class LiveBody(BaseModel):
+    tv: str | None = None
+    url: str = Field(max_length=2000, description="the page to open (its host must be in URL_HOSTS)")
+    wait: bool = Field(False, description="answer when the page is opening (a few seconds) instead of right away")
 
 
 class HideBody(BaseModel):
@@ -122,6 +137,20 @@ def _submit(name: str, action: str, work, wait: bool):
     return JSONResponse(result, status_code=200 if result["ok"] else 502)
 
 
+def _check_page(url: str, *, restricted: bool) -> None:
+    """A page the TV may be sent to. It always has to be a plain http(s) address. `restricted` (a page that this
+    service fetches and renders itself) also needs the host on the operator's list: there the pod would reach whatever
+    the address points to. A live page is opened by the TV, not by the pod, so there only the API key gates it."""
+    if restricted and not URL_HOSTS:
+        raise HTTPException(503, "URL_HOSTS is not configured (no page may be rendered)")
+    try:
+        tvdash.check_url(url, URL_HOSTS if restricted else None)
+    except PermissionError as error:
+        raise HTTPException(403, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
 def _need_hass() -> None:
     if not (os.environ.get("HASS_URL") and os.environ.get("HASS_TOKEN")):
         raise HTTPException(503, "HASS_URL and HASS_TOKEN are not configured")
@@ -142,20 +171,40 @@ def show(body: ShowBody):
     """Render a dashboard and put it on the TV. The art that was showing is remembered for /hide."""
     name, host = _resolve(body.tv)
     camera = body.camera or DOORBELL_CAMERA
+    if (body.dashboard == "url") != (body.url is not None):
+        raise HTTPException(422, 'give "url" with the dashboard "url", and only then')
+    if body.live and body.dashboard != "url":
+        raise HTTPException(422, '"live" only goes with the dashboard "url"')
+    if body.dashboard == "url":
+        _check_page(body.url, restricted=not body.live)
     if body.dashboard == "morning":
         _need_config()
-    if body.dashboard == "morning" or camera:
+    if body.dashboard == "morning" or (body.dashboard == "doorbell" and camera):
         _need_hass()
     out = tvdash.OUT_DIR / f"{name}.png"
 
     def work():
         if body.dashboard == "morning":
             tvdash.make_morning(out, body.date)
+        elif body.dashboard == "url" and body.live:
+            return {"dashboard": "url", "live": True, "page": tv.kiosk_show(host, body.url)}
+        elif body.dashboard == "url":
+            tvdash.make_url(out, body.url, URL_HOSTS)
         else:
             tvdash.make_doorbell(out, camera, os.environ.get("HASS_URL"))
         return {"image": tv.show_image(host, out.read_bytes()), "dashboard": body.dashboard}
 
     return _submit(name, f"show {body.dashboard}", work, body.wait)
+
+
+@app.post("/live", dependencies=[Depends(auth)])
+def live(body: LiveBody):
+    """Start the tvdash companion app on the TV and have it open `url`: live, full screen, no bars, and the remote's
+    keys reach the page. Any http(s) address is accepted (the TV opens it, not this service). A sleeping TV is woken
+    first. Close it again with /hide (the earlier art comes back)."""
+    name, host = _resolve(body.tv)
+    _check_page(body.url, restricted=False)
+    return _submit(name, "live", lambda: {"page": tv.kiosk_show(host, body.url)}, body.wait)
 
 
 @app.post("/hide", dependencies=[Depends(auth)])
@@ -203,11 +252,16 @@ def status():
             youtube_state = tv.youtube_state(host)
         except (tv.TVError, ValueError) as error:
             youtube_state = f"unknown ({error})"
+        try:
+            companion = tv.kiosk_state(host)
+        except (tv.TVError, ValueError) as error:
+            companion = f"unknown ({error})"
         result[name] = {
             "address": host,
             "dashboard_showing": state["showing"],
             "will_restore": (state["previous"] or {}).get("content_id"),
             "youtube": youtube_state,
+            "companion": companion,
             "last_job": _last.get(name),
         }
     return result

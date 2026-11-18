@@ -20,3 +20,5 @@ charts
 *.md
 *.iml
 *.tgz
+tizen
+*.wgt

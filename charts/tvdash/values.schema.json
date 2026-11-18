@@ -44,6 +44,7 @@
     },
     "config": {"type": "object"},
     "doorbellCamera": {"type": "string", "pattern": "^(camera\\.[a-z0-9_]+)?$"},
+    "urlHosts": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9.-]+$"}},
     "fallbackArt": {"type": "string", "pattern": "^[A-Za-z0-9_-]*$"},
     "extraEnv": {"type": "array"},
     "persistence": {

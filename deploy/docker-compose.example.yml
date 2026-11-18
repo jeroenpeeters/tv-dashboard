@@ -16,6 +16,9 @@ services:
       HASS_TOKEN: ${TVDASH_HASS_TOKEN:?set TVDASH_HASS_TOKEN}
       TVDASH_CONFIG: /config/tvdash.json
       DOORBELL_CAMERA: camera.front_door
+      # Web pages this service may render and show as a picture ({"dashboard": "url"}); without this that is off.
+      # (Live pages, POST /live, are opened by the TV itself and are not limited by it.)
+      # URL_HOSTS: recipes.example.com
       # Art to show on /hide when no earlier art was recorded. List the ids with GET /art.
       # FALLBACK_ART: MY_F0001
     volumes:

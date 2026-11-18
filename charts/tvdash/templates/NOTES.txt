@@ -14,6 +14,15 @@ Home Assistant calls it with the header  X-Api-Key: <the api-key from the Secret
 
 Check it:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "tvdash.fullname" . }} 8080:{{ .Values.service.port }}
            curl http://127.0.0.1:8080/health
+
+Live pages: POST /live {"url": "https://..."} starts the tvdash companion app on the TV and opens that page in it
+(any http(s) address; /hide closes it). The app has to be installed on the TV first, see tizen/README.md in the
+repository; GET /status shows it as "companion" (running, stopped or not installed).
+{{- if .Values.urlHosts }}
+Pictures of web pages (POST /show {"dashboard": "url"}) may use these hosts: {{ join ", " .Values.urlHosts }}.
+{{- else }}
+Pictures of web pages (POST /show {"dashboard": "url"}) are off: set urlHosts to the hosts this service may render.
+{{- end }}
 {{- if not .Values.config }}
 
 No `config` is set: the morning board is switched off (the doorbell dashboard and YouTube still work).
